@@ -1,9 +1,25 @@
+import { useState } from 'react';
+import { apiErrorMessage } from '../../api/apiErrors';
 import { usePrescriptions } from '../../context/PrescriptionsContext';
 import StatusBadge from '../../components/StatusBadge/StatusBadge';
 import styles from './Dashboard.module.css';
 
 export default function Dashboard() {
-  const { recetas, loading, usingMock, updateStatus } = usePrescriptions();
+  const { recetas, loading, usingMock, error, updateStatus, refresh } = usePrescriptions();
+  const [actionError, setActionError] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const handleStatus = async (id, status) => {
+    setActionError('');
+    setBusy(true);
+    try {
+      await updateStatus(id, status);
+    } catch (err) {
+      setActionError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const porValidar = recetas.filter((r) => r.status === 'INGRESADA');
   const enPreparacion = recetas.filter((r) => r.status === 'EN_PREPARACION');
@@ -15,9 +31,11 @@ export default function Dashboard() {
   return (
     <div className={styles.dashboard}>
       <h1 className={styles.title}>Cola de trabajo</h1>
+      <button onClick={refresh} disabled={busy}>Actualizar conexión</button>
+      {(error || actionError) && <p role="alert">{actionError || error}</p>}
       {usingMock && (
         <p className={styles.mockNotice}>
-          Mostrando datos de ejemplo — prescriptions-svc todavía no está desplegado.
+          Modo de ejemplo: el servicio no está disponible. Los cambios se guardan solo en este navegador.
         </p>
       )}
       <div className={styles.columns}>
@@ -32,7 +50,8 @@ export default function Dashboard() {
               </div>
               <button
                 className={styles.actionButton}
-                onClick={() => updateStatus(receta.id, 'VALIDADA')}
+                disabled={busy}
+                onClick={() => handleStatus(receta.id, 'VALIDADA')}
               >
                 Validar
               </button>
@@ -53,7 +72,8 @@ export default function Dashboard() {
               </div>
               <button
                 className={styles.actionButton}
-                onClick={() => updateStatus(receta.id, 'LISTA_RETIRO')}
+                disabled={busy}
+                onClick={() => handleStatus(receta.id, 'LISTA_RETIRO')}
               >
                 Marcar lista para retiro
               </button>

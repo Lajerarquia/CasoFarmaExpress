@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { Pill } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useCatalog } from '../../context/CatalogContext';
+import { useCart } from '../../context/CartContext';
+import { apiErrorMessage } from '../../api/apiErrors';
 import { useDebounce } from '../../hooks/useDebounce';
 import Modal from '../../components/Modal/Modal';
 import ProductCard from '../../components/ProductCard/ProductCard';
@@ -11,7 +13,9 @@ import styles from './Catalog.module.css';
 export default function Catalog() {
   const { user } = useAuth();
   const isAdmin = (user?.roles || []).includes('Admin');
-  const { medicamentos, loading, createMedicamento, updateMedicamento } = useCatalog();
+  const { medicamentos, loading, usingMock, error, createMedicamento, updateMedicamento,
+    deleteMedicamento, refresh } = useCatalog();
+  const { removeItem } = useCart();
 
   const [search, setSearch] = useState('');
   const debouncedSearch = useDebounce(search, 400);
@@ -23,6 +27,8 @@ export default function Catalog() {
   const [nuevo, setNuevo] = useState({ nombre: '', sku: '', precio: '', stock: '' });
 
   const [selectedProduct, setSelectedProduct] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const filtered = useMemo(() => {
     return medicamentos.filter((m) => {
@@ -39,14 +45,24 @@ export default function Catalog() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
-    await createMedicamento({
-      nombre: nuevo.nombre,
-      sku: nuevo.sku,
-      precio: Number(nuevo.precio),
-      stock: Number(nuevo.stock),
-    });
-    setNuevo({ nombre: '', sku: '', precio: '', stock: '' });
-    setIsCreateOpen(false);
+    setSaving(true);
+    setSaveError('');
+    try {
+      await createMedicamento(nuevo);
+      setNuevo({ nombre: '', sku: '', precio: '', stock: '' });
+      setIsCreateOpen(false);
+    } catch (err) {
+      setSaveError(apiErrorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (medicamento) => {
+    if (!window.confirm(`¿Eliminar ${medicamento.nombre} del catálogo?`)) return;
+    await deleteMedicamento(medicamento.id);
+    removeItem(medicamento.id);
+    setSelectedProduct(null);
   };
 
   return (
@@ -60,11 +76,22 @@ export default function Catalog() {
           <p className={styles.bannerSubtitle}>Encuentra tus medicamentos y agrégalos al carrito</p>
         </div>
         {isAdmin && (
-          <button className={styles.newButton} onClick={() => setIsCreateOpen(true)}>
+          <button className={styles.newButton} disabled={loading || Boolean(error)}
+            onClick={() => { setSaveError(''); setIsCreateOpen(true); }}>
             + Añadir medicamento
           </button>
         )}
       </div>
+
+      {usingMock && (
+        <p className={styles.mockNotice} role="status">
+          Modo de ejemplo: el servicio no está disponible. Los cambios se guardan solo en este navegador.
+        </p>
+      )}
+      {error && <p role="alert">{error}</p>}
+      <button onClick={refresh} disabled={loading || saving || isCreateOpen}>
+        {loading ? 'Conectando...' : 'Actualizar conexión'}
+      </button>
 
       <div className={styles.filters}>
         <input
@@ -107,6 +134,7 @@ export default function Catalog() {
               medicamento={medicamento}
               isAdmin={isAdmin}
               onSave={updateMedicamento}
+              onDelete={handleDelete}
               onViewDetail={setSelectedProduct}
             />
           ))}
@@ -123,13 +151,14 @@ export default function Catalog() {
       />
 
       {isAdmin && (
-        <Modal isOpen={isCreateOpen} onClose={() => setIsCreateOpen(false)} title="Nuevo medicamento">
+        <Modal isOpen={isCreateOpen} onClose={() => { if (!saving) setIsCreateOpen(false); }} title="Nuevo medicamento">
           <form onSubmit={handleCreate} className={styles.form}>
             <label className={styles.label}>
               SKU
               <input
                 className={styles.input}
                 value={nuevo.sku}
+                maxLength={100}
                 onChange={(e) => setNuevo({ ...nuevo, sku: e.target.value })}
                 required
               />
@@ -139,6 +168,7 @@ export default function Catalog() {
               <input
                 className={styles.input}
                 value={nuevo.nombre}
+                maxLength={200}
                 onChange={(e) => setNuevo({ ...nuevo, nombre: e.target.value })}
                 required
               />
@@ -149,6 +179,9 @@ export default function Catalog() {
                 className={styles.input}
                 type="number"
                 value={nuevo.precio}
+                min="0"
+                max="9999999999.99"
+                step="0.01"
                 onChange={(e) => setNuevo({ ...nuevo, precio: e.target.value })}
                 required
               />
@@ -159,12 +192,16 @@ export default function Catalog() {
                 className={styles.input}
                 type="number"
                 value={nuevo.stock}
+                min="0"
+                max="2147483647"
+                step="1"
                 onChange={(e) => setNuevo({ ...nuevo, stock: e.target.value })}
                 required
               />
             </label>
-            <button type="submit" className={styles.submitButton}>
-              Crear medicamento
+            {saveError && <p role="alert">{saveError}</p>}
+            <button type="submit" className={styles.submitButton} disabled={saving}>
+              {saving ? 'Guardando...' : 'Crear medicamento'}
             </button>
           </form>
         </Modal>

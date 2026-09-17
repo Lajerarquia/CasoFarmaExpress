@@ -1,25 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { usePrescriptions } from '../../context/PrescriptionsContext';
+import { apiErrorMessage } from '../../api/apiErrors';
+import { isHttpUrl, PRESCRIPTION_STATUSES, NEXT_STATUS } from '../../api/contracts';
 import StatusBadge from '../../components/StatusBadge/StatusBadge';
 import Drawer from '../../components/Drawer/Drawer';
 import styles from './Prescriptions.module.css';
-
-const STATUS_OPTIONS = [
-  'INGRESADA',
-  'VALIDADA',
-  'EN_PREPARACION',
-  'LISTA_RETIRO',
-  'DISPENSADA',
-  'RECHAZADA',
-];
-
-const NEXT_STATUS = {
-  INGRESADA: 'VALIDADA',
-  VALIDADA: 'EN_PREPARACION',
-  EN_PREPARACION: 'LISTA_RETIRO',
-  LISTA_RETIRO: 'DISPENSADA',
-};
 
 const NEXT_LABEL = {
   INGRESADA: 'Validar',
@@ -33,38 +19,57 @@ export default function Prescriptions() {
   const roles = user?.roles || [];
   const isOperador = roles.includes('Operador') || roles.includes('Admin');
 
-  const { recetas, loading, usingMock, updateStatus } = usePrescriptions();
+  const { recetas, loading, usingMock, error, getReceta, updateStatus, refresh } = usePrescriptions();
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedReceta, setSelectedReceta] = useState(null);
+  const [actionError, setActionError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const filtered = useMemo(
     () => (statusFilter ? recetas.filter((r) => r.status === statusFilter) : recetas),
     [recetas, statusFilter]
   );
 
-  const handleAdvance = async (receta) => {
-    const next = NEXT_STATUS[receta.status];
-    if (!next) return;
-    await updateStatus(receta.id, next);
-    setSelectedReceta(null);
+  const handleSelect = async (id) => {
+    if (busy) return;
+    setActionError('');
+    setBusy(true);
+    try {
+      setSelectedReceta(await getReceta(id));
+    } catch (err) {
+      setActionError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const handleRechazar = async (receta) => {
-    await updateStatus(receta.id, 'RECHAZADA');
-    setSelectedReceta(null);
+  const handleStatus = async (receta, next) => {
+    setActionError('');
+    setBusy(true);
+    try {
+      await updateStatus(receta.id, next);
+      setSelectedReceta(null);
+    } catch (err) {
+      setActionError(apiErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className={styles.page}>
       <div className={styles.header}>
         <h1 className={styles.title}>Recetas</h1>
+        <button onClick={refresh} disabled={loading || busy || Boolean(selectedReceta)}>Actualizar conexión</button>
       </div>
 
       {usingMock && (
         <p className={styles.mockNotice}>
-          Mostrando datos de ejemplo — prescriptions-svc todavía no está desplegado.
+          Modo de ejemplo: el servicio no está disponible. Los cambios se guardan solo en este navegador.
         </p>
       )}
+      {(error || actionError) && <p role="alert" className={styles.error}>{actionError || error}</p>}
+      {busy && <p role="status">Procesando receta...</p>}
 
       <div className={styles.filters}>
         <select
@@ -73,7 +78,7 @@ export default function Prescriptions() {
           onChange={(e) => setStatusFilter(e.target.value)}
         >
           <option value="">Todos los estados</option>
-          {STATUS_OPTIONS.map((status) => (
+          {PRESCRIPTION_STATUSES.map((status) => (
             <option key={status} value={status}>
               {status}
             </option>
@@ -87,14 +92,14 @@ export default function Prescriptions() {
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>Paciente</th>
+              <th>Paciente / identificador</th>
               <th>Estado</th>
               <th>Fecha</th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((receta) => (
-              <tr key={receta.id} className={styles.row} onClick={() => setSelectedReceta(receta)}>
+              <tr key={receta.id} className={styles.row} onClick={() => handleSelect(receta.id)}>
                 <td>{receta.pacienteNombre}</td>
                 <td>
                   <StatusBadge status={receta.status} />
@@ -115,7 +120,7 @@ export default function Prescriptions() {
 
       <Drawer
         isOpen={!!selectedReceta}
-        onClose={() => setSelectedReceta(null)}
+        onClose={() => { if (!busy) setSelectedReceta(null); }}
         title={selectedReceta ? `Receta de ${selectedReceta.pacienteNombre}` : ''}
       >
         {selectedReceta && (
@@ -124,15 +129,22 @@ export default function Prescriptions() {
               <StatusBadge status={selectedReceta.status} />
             </div>
             <p className={styles.drawerText}>Fecha: {selectedReceta.fechaCreacion}</p>
+            <p className={styles.drawerText}>Farmacia: {selectedReceta.pharmacyId || 'Sin indicar'}</p>
+            {isHttpUrl(selectedReceta.imageUrl) && (
+              <a href={selectedReceta.imageUrl} target="_blank" rel="noopener noreferrer">Ver receta</a>
+            )}
+            {actionError && <p role="alert" className={styles.error}>{actionError}</p>}
 
             {isOperador && NEXT_STATUS[selectedReceta.status] && (
-              <button className={styles.actionButton} onClick={() => handleAdvance(selectedReceta)}>
+              <button className={styles.actionButton} disabled={busy}
+                onClick={() => handleStatus(selectedReceta, NEXT_STATUS[selectedReceta.status])}>
                 {NEXT_LABEL[selectedReceta.status]}
               </button>
             )}
 
             {isOperador && ['INGRESADA', 'VALIDADA'].includes(selectedReceta.status) && (
-              <button className={styles.rejectButton} onClick={() => handleRechazar(selectedReceta)}>
+              <button className={styles.rejectButton} disabled={busy}
+                onClick={() => handleStatus(selectedReceta, 'RECHAZADA')}>
                 Rechazar
               </button>
             )}

@@ -3,6 +3,7 @@ import { ShoppingCart } from 'lucide-react';
 import { useCart } from '../../context/CartContext';
 import { useCatalog } from '../../context/CatalogContext';
 import { useAuth } from '../../context/AuthContext';
+import { apiErrorMessage } from '../../api/apiErrors';
 import Drawer from '../Drawer/Drawer';
 import styles from './CartButton.module.css';
 
@@ -13,15 +14,23 @@ export default function CartButton() {
   const [isOpen, setIsOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [success, setSuccess] = useState(false);
+  const [error, setError] = useState('');
 
   const handleCheckout = async () => {
     if (!isAuthenticated) return;
     setConfirming(true);
-    await purchase(items.map((i) => ({ id: i.id, cantidad: i.cantidad })));
-    clearCart();
-    setConfirming(false);
-    setSuccess(true);
-    setTimeout(() => setSuccess(false), 2500);
+    setError('');
+    setSuccess(false);
+    try {
+      await purchase(items.map((i) => ({ id: i.id, cantidad: i.cantidad })));
+      clearCart();
+      setSuccess(true);
+      setTimeout(() => setSuccess(false), 2500);
+    } catch (err) {
+      setError(apiErrorMessage(err));
+    } finally {
+      setConfirming(false);
+    }
   };
 
   return (
@@ -38,7 +47,7 @@ export default function CartButton() {
           <>
             {items.map((item) => {
               const medicamento = medicamentos.find((m) => m.id === item.id);
-              const stock = medicamento?.stock ?? Infinity;
+              const stock = medicamento?.stock ?? 0;
               const atMax = item.cantidad >= stock;
 
               return (
@@ -84,6 +93,7 @@ export default function CartButton() {
           </>
         )}
 
+        {error && <p role="alert" className={styles.warning}>{error}</p>}
         {success && <p className={styles.success}>¡Compra realizada con éxito!</p>}
       </Drawer>
     </>
